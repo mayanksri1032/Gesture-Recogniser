@@ -1,76 +1,74 @@
 import cv2
-import numpy as np
+import mediapipe as mp
 import pyautogui
 
-# Constants for gesture detection
-MIN_CONTOUR_AREA = 1000  # Minimum contour area to be considered as a hand
-GESTURE_AREA = 10000  # Area threshold for gesture detection
-GESTURE_TIMEOUT = 10  # Timeout in frames for recognizing gestures
-GESTURE_RECOGNIZED = False  # Flag to indicate if a gesture has been recognized
-GESTURE_FRAME_COUNT = 0  # Counter for frames since last recognized gesture
+mp_hands = mp.solutions.hands
+hands = mp_hands.Hands()
+mp_drawing = mp.solutions.drawing_utils
 
-# Function to perform finger detection and gesture recognition
-def detect_fingers(frame):
-    global GESTURE_RECOGNIZED, GESTURE_FRAME_COUNT
+screen_width, screen_height = pyautogui.size()
 
-    # Convert frame to grayscale
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+cap = cv2.VideoCapture(0)
+prev_x = None
+prev_y = None
 
-    # Apply Gaussian blur to remove noise
-    blurred = cv2.GaussianBlur(gray, (11, 11), 0)
+while cap.isOpened():
+    ret, frame = cap.read()
+    if not ret:
+        break
 
-    # Threshold the image to obtain binary image
-    _, thresholded = cv2.threshold(blurred, 100, 255, cv2.THRESH_BINARY)
+    frame = cv2.flip(frame, 1)  # Mirror image
 
-    # Find contours in the binary image
-    contours, _ = cv2.findContours(thresholded.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    results = hands.process(rgb_frame)
 
-    # Iterate through the contours to find the hand
-    for contour in contours:
-        area = cv2.contourArea(contour)
-        if area > MIN_CONTOUR_AREA:
-            # Check if the hand is covering a large area
-            if area > GESTURE_AREA:
-                GESTURE_RECOGNIZED = True
+    if results.multi_hand_landmarks:
+        for hand_landmarks in results.multi_hand_landmarks:
+            handedness = results.multi_handedness[results.multi_hand_landmarks.index(hand_landmarks)].classification[0].label
 
-# Function to process recognized gesture
-def process_gesture():
-    global GESTURE_RECOGNIZED, GESTURE_FRAME_COUNT
+            mp_drawing.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
 
-    if GESTURE_RECOGNIZED:
-        GESTURE_FRAME_COUNT += 1
-        if GESTURE_FRAME_COUNT >= GESTURE_TIMEOUT:
-            pyautogui.hotkey('space')  # Pause or resume video
-    else:
-        GESTURE_FRAME_COUNT = 0
+            index_tip = hand_landmarks.landmark[mp_hands.HandLandmark.INDEX_FINGER_TIP]
+            index_mid = hand_landmarks.landmark[mp_hands.HandLandmark.INDEX_FINGER_PIP]
 
-    # Reset gesture recognition
-    GESTURE_RECOGNIZED = False
+            if handedness == "Left":
+                mcp_x = hand_landmarks.landmark[mp_hands.HandLandmark.MIDDLE_FINGER_MCP].x
+                mcp_y = hand_landmarks.landmark[mp_hands.HandLandmark.MIDDLE_FINGER_MCP].y
 
-# Main function to capture video feed and perform actions
-def main():
-    cap = cv2.VideoCapture(0)
+                scaling_factor = 1  # Adjust this value to decrease sensitivity
 
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
+                cursor_x = int(mcp_x * screen_width * scaling_factor)
+                cursor_y = int(mcp_y * screen_height * scaling_factor)
 
-        # Detect fingers and perform gesture recognition
-        detect_fingers(frame)
+                pyautogui.moveTo(cursor_x, cursor_y, duration=0.1)
 
-        # Process recognized gesture
-        process_gesture()
+                if index_tip.y >= index_mid.y:
+                    pyautogui.click()
 
-        # Display the frame
-        cv2.imshow('Finger Detection', frame)
+            elif handedness == "Right":
+                x, y = int(index_tip.x * screen_width), int(index_tip.y * screen_height)
+                if prev_x is not None and prev_y is not None:
+                    dx = x - prev_x
+                    dy = y - prev_y
 
-        # Exit on 'q' key press
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
+                    if abs(dx) > abs(dy):
+                        if dx > 50:  # right
+                            pyautogui.press('right')
+                        elif dx < -50:  # left
+                            pyautogui.press('left')
+                    else:
+                        if dy > 50:  # down
+                            pyautogui.press('down')
+                        elif dy < -50:  # up
+                            pyautogui.press('up')
 
-    cap.release()
-    cv2.destroyAllWindows()
+                prev_x = x
+                prev_y = y
 
-if __name__ == "__main__":
-    main()
+    cv2.imshow("Gesture Recognition", frame)
+
+    if cv2.waitKey(10) & 0xFF == ord('q'):
+        break
+
+cap.release()
+cv2.destroyAllWindows()
